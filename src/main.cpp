@@ -1,98 +1,56 @@
-#include <WiFi.h>
-#include <esp_now.h>
-#include <Adafruit_Sensor.h>
-#include <Adafruit_MPU6050.h>
+#include <Wire.h>
+#include <RH_RF95.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 
-// MPU6050 sensor instance
-Adafruit_MPU6050 mpu;
+#define SCREEN_WIDTH 128 // OLED display width, in pixels
+#define SCREEN_HEIGHT 64 // OLED display height, in pixels
+#define OLED_RESET     -1 // Reset pin # (or -1 if sharing Arduino reset pin)
+#define SCREEN_ADDRESS 0x3C // See datasheet for Address; 0x3C for most screens
 
-// Structure to send data
-typedef struct struct_message
-{
-  float accelX;
-  float accelY;
-  float accelZ;
-} struct_message;
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-struct_message myData;
-// Register peer
-uint8_t peerAddress[] = {0x08, 0xF9, 0xE0, 0xD0, 0x20, 0x9C};
+RH_RF95 rf95;
 
-// Callback when data is sent
-void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t sendStatus)
-{
-  Serial.print("Send Status: ");
-  if (sendStatus == ESP_NOW_SEND_SUCCESS)
-  {
-    Serial.println("Delivery success");
-  }
-  else
-  {
-    Serial.println("Delivery fail");
-  }
-}
-
-void setup()
-{
-  Serial.begin(115200);
-  WiFi.mode(WIFI_STA); // Set device in STA mode to initiate ESP-NOW communication
-  Serial.println(WiFi.macAddress());
-
-  // Initialize MPU6050
-  if (!mpu.begin())
-  {
-    Serial.println("Failed to find MPU6050 chip");
-    while (1)
-    {
-      delay(1000);
+void setup() {
+    Serial.begin(9600);
+    if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+        Serial.println(F("SSD1306 allocation failed"));
+        for(;;);
     }
-  }
-  mpu.setAccelerometerRange(MPU6050_RANGE_16_G);
-  Serial.println("MPU6050 initialized!");
-
-  // Initialize ESP-NOW
-  if (esp_now_init() != ESP_OK)
-  {
-    Serial.println("Error initializing ESP-NOW");
-    return;
-  }
-
-  // Register callback for sending data
-  esp_now_register_send_cb(OnDataSent);
-
-  // Replace with actual MAC Address of the T-Beam
-  esp_now_peer_info_t peerInfo = {};
-  memset(&peerInfo, 0, sizeof(peerInfo));
-  memcpy(peerInfo.peer_addr, peerAddress, 6);
-  peerInfo.channel = 0; // use the current channel
-  peerInfo.encrypt = false;
-
-  if (esp_now_add_peer(&peerInfo) != ESP_OK)
-  {
-    Serial.println("Failed to add peer");
-    return;
-  }
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0,0);
+    display.println("LoRa Sender Init");
+    display.display();
+    
+    if (!rf95.init()) {
+        display.println("LoRa init failed");
+        display.display();
+        while (1);
+    }
+    if (!rf95.setFrequency(915.0)) {
+        display.println("Set freq failed");
+        display.display();
+        while (1);
+    }
+    rf95.setTxPower(18, true);
+    display.println("LoRa Ready!");
+    display.display();
 }
 
-void loop()
-{
-  sensors_event_t a, g, temp;
-  mpu.getEvent(&a, &g, &temp);
+void loop() {
+    const char *msg = "Hello, LoRa!";
+    rf95.send((uint8_t *)msg, strlen(msg));
+    rf95.waitPacketSent();
 
-  // Print accelerometer values
-  Serial.print("Accelerometer: X=");
-  Serial.print(a.acceleration.x);
-  Serial.print(" Y=");
-  Serial.print(a.acceleration.y);
-  Serial.print(" Z=");
-  Serial.println(a.acceleration.z);
+    display.clearDisplay();
+    display.setCursor(0,0);
+    display.println("Sending message:");
+    display.println(msg);
+    display.display();
 
-  // Assign data to the structure
-  myData.accelX = a.acceleration.x;
-  myData.accelY = a.acceleration.y;
-  myData.accelZ = a.acceleration.z;
-
-  // Send data
-  esp_now_send(peerAddress, (uint8_t *)&myData, sizeof(struct_message)); // Send to specific peer
-  delay(20000);                                                           // Send every 2 seconds
+    Serial.println("Message sent");
+    delay(1000);
 }
