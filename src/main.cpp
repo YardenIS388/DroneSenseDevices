@@ -1,4 +1,4 @@
-#include <LoRa.h>
+#include <RH_RF95.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
@@ -8,12 +8,17 @@
 #define OLED_RESET -1    // Reset pin # (or -1 if sharing Arduino reset pin)
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-#define BAND 868E6 // LoRa Frequency, set to your region's frequency
 #define RADIO_CS_PIN 18
-#define RADIO_DIO0_PIN 26
 #define RADIO_RST_PIN 23
+#define RADIO_DIO0_PIN 26
+#define BAND 868.0 // LoRa Frequency in MHz
 
-typedef struct struct_message {
+int counter = 0;
+
+RH_RF95 rf95(RADIO_CS_PIN, RADIO_DIO0_PIN);
+
+typedef struct struct_message
+{
   float accelX;
   float accelY;
   float accelZ;
@@ -35,11 +40,17 @@ void setup()
   display.println("LoRa Receiver");
   display.display();
 
-  // Initialize LoRa using the frequency defined above
-  LoRa.setPins(RADIO_CS_PIN, RADIO_RST_PIN, RADIO_DIO0_PIN);
-  if (!LoRa.begin(BAND))
+  // Initialize RH_RF95 LoRa radio
+  if (!rf95.init())
   {
-    display.println("Starting LoRa failed!");
+    display.println("LoRa init failed!");
+    display.display();
+    while (1)
+      ;
+  }
+  if (!rf95.setFrequency(BAND))
+  {
+    display.println("Frequency set failed!");
     display.display();
     while (1)
       ;
@@ -50,32 +61,48 @@ void setup()
 
 void loop()
 {
-      int packetSize = LoRa.parsePacket();
-      Serial.println(packetSize);
-    if (packetSize) {
+
+  // Periodically print the RSSI when no data is available
+  if (!rf95.available())
+  {
+    int rssi = rf95.lastRssi();
+    Serial.print("No data available. RSSI: ");
+    Serial.println(rssi);
+  }
+  if (rf95.available())
+  {
+    struct_message receivedData;
+    uint8_t buf[sizeof(struct_message)];
+    uint8_t len = sizeof(buf);
+
+    if (rf95.recv(buf, &len))
+    {
+      if (len == sizeof(struct_message))
+      {
+        memcpy(&receivedData, buf, sizeof(struct_message));
+        counter++;
+        display.clearDisplay();
+        display.setCursor(0, 0);
+        display.println("Received Data: Transmission #" + String(counter));
+        display.printf("AX: %.2f, AY: %.2f, AZ: %.2f\n", receivedData.accelX, receivedData.accelY, receivedData.accelZ);
+        display.print("RSSI: ");
+        display.println(rf95.lastRssi()); // Get the RSSI value from last received packet
+        display.display();
+
         Serial.println("Packet received!");
-
-        // Check if the packet size matches the expected size of struct_message
-        if (packetSize == sizeof(struct_message)) {
-            struct_message receivedData;
-            // Read the packet into the struct
-            uint8_t *dataPtr = (uint8_t *)&receivedData;
-            for (int i = 0; i < sizeof(struct_message); i++) {
-                dataPtr[i] = LoRa.read();
-            }
-
-            // Print and display the received data
-            display.clearDisplay();
-            display.setCursor(0, 0);
-            display.println("Received Data:");
-            display.printf("AX: %.2f, AY: %.2f, AZ: %.2f\n", receivedData.accelX, receivedData.accelY, receivedData.accelZ);
-            display.print("RSSI: ");
-            display.println(LoRa.packetRssi());
-            display.display();
-        } else {
-            Serial.println("Received packet of unexpected size.");
-        }
-    } else {
-        Serial.println("No packet received.");
+        Serial.printf("AX: %.2f, AY: %.2f, AZ: %.2f\n", receivedData.accelX, receivedData.accelY, receivedData.accelZ);
+        Serial.print("RSSI: ");
+        Serial.println(rf95.lastRssi());
+      }
+      else
+      {
+        Serial.println("Received packet of unexpected size.");
+      }
     }
+  }
+  else
+  {
+    Serial.println("No packet received.");
+  }
+  delay(1000);
 }
